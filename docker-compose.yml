@@ -1,0 +1,51 @@
+services:
+  apache_php83:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: LARAVEL_MENSAGERIA
+    ports:
+      - "80:80"
+    volumes:
+      - ./laravel:/var/www/html
+    networks:
+      - rede_mensageria
+    
+  rmq_mensageria_exercicio:
+    image: rabbitmq:3-management
+    container_name: rabbitmq_exercicio
+    ports:
+      - "5672:5672"    # AMQP protocol
+      - "15672:15672"  # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - ./rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rede_mensageria
+
+
+  mysql:
+    image: mysql:8.4
+    container_name: MYSQL_MENSAGERIA
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: mensageria
+      MYSQL_USER: rodrigo
+      MYSQL_PASSWORD: 123456
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./mysql_data:/var/lib/mysql
+    networks:
+      - rede_mensageria
+networks:
+  rede_mensageria:
+    driver: bridge
