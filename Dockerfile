@@ -22,6 +22,7 @@ RUN sudo apt install net-tools -y
 # Instala as extensões que você precisar
 RUN docker-php-ext-install pdo pdo_mysql
 RUN docker-php-ext-install zip
+RUN docker-php-ext-install sockets
 
 
 RUN curl -sS https://getcomposer.org/installer -o composer-setup.php
