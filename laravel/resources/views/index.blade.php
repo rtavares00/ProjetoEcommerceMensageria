@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>NexusCommerce - Dev Sandbox RabbitMQ</title>
     <!-- Tailwind CSS CDN para estilização rápida -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -55,9 +56,29 @@
                     <div>
                         <label class="block text-xs font-medium text-slate-400 mb-1">Item Selecionado</label>
                         <select id="produto" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 transition">
-                            <option value="Teclado Mecânico RGB|350.00">Teclado Mecânico RGB - R$ 350,00</option>
-                            <option value="Mouse Pad XL Extra Large|80.00">Mouse Pad XL Extra Large - R$ 80,00</option>
-                            <option value="Monitor UltraWide 29|1200.00">Monitor UltraWide 29" - R$ 1.200,00</option>
+                            <optgroup label="Periféricos">
+                                <option value="Teclado Mecânico RGB|350.00">Teclado Mecânico RGB - R$ 350,00</option>
+                                <option value="Mouse Gamer 16000 DPI|180.00">Mouse Gamer 16000 DPI - R$ 180,00</option>
+                                <option value="Mouse Pad XL Extra Large|80.00">Mouse Pad XL Extra Large - R$ 80,00</option>
+                                <option value="Headset Gamer 7.1|290.00">Headset Gamer 7.1 - R$ 290,00</option>
+                                <option value="Webcam Full HD 1080p|220.00">Webcam Full HD 1080p - R$ 220,00</option>
+                            </optgroup>
+                            <optgroup label="Monitores e Vídeo">
+                                <option value="Monitor UltraWide 29|1200.00">Monitor UltraWide 29" - R$ 1.200,00</option>
+                                <option value="Monitor Full HD 24|780.00">Monitor Full HD 24" - R$ 780,00</option>
+                                <option value="Suporte Articulado para Monitor|150.00">Suporte Articulado para Monitor - R$ 150,00</option>
+                            </optgroup>
+                            <optgroup label="Armazenamento e Rede">
+                                <option value="SSD NVMe 1TB|450.00">SSD NVMe 1TB - R$ 450,00</option>
+                                <option value="HD Externo 2TB|380.00">HD Externo 2TB - R$ 380,00</option>
+                                <option value="Roteador Wi-Fi 6|320.00">Roteador Wi-Fi 6 - R$ 320,00</option>
+                                <option value="Hub USB-C 7 em 1|130.00">Hub USB-C 7 em 1 - R$ 130,00</option>
+                            </optgroup>
+                            <optgroup label="Escritório">
+                                <option value="Cadeira Ergonômica|1100.00">Cadeira Ergonômica - R$ 1.100,00</option>
+                                <option value="Mesa Gamer 140cm|650.00">Mesa Gamer 140cm - R$ 650,00</option>
+                                <option value="Luminária de Mesa LED|95.00">Luminária de Mesa LED - R$ 95,00</option>
+                            </optgroup>
                         </select>
                     </div>
 
@@ -197,7 +218,10 @@
                 // Altere o caminho '/checkout.php' caso o seu script de backend tenha outro nome
                 const response = await fetch('checkout', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+                    },
                     body: JSON.stringify(payload)
                 });
 
