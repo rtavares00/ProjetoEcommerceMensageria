@@ -195,7 +195,7 @@
 
             try {
                 // Altere o caminho '/checkout.php' caso o seu script de backend tenha outro nome
-                const response = await fetch('checkout.php', {
+                const response = await fetch('checkout', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
