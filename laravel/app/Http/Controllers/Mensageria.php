@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Contracts\View\View;
+use Illuminate\Support\Facades\Log;
+use App\Services\PedidoProducer;
 
 class Mensageria extends Controller
 {
@@ -37,7 +39,7 @@ class Mensageria extends Controller
         if(!empty($request->itens)):
             $this->itens = $request->itens;
             foreach($request->itens as $item):
-                $this->totalPrice += $item['preco'];
+                $this->totalPrice += $item['preco'] * $item['qtd'];
                 $this->totalQtd += $item['qtd'];
             endforeach;
         endif;
@@ -66,13 +68,39 @@ class Mensageria extends Controller
         $this->handleInputData($request);
         $itens = $this->getItens();
         $cliente = $this->getCustomer();
+
+        $pedido = array(
+            '_id' => bin2hex(random_bytes(16)),
+            'customer' => $this->getCustomer(),
+            'itens' => $this->getItens(),
+            'fullprice' => $this->totalPrice
+        );
         
+        try{
+            $producer = new PedidoProducer(); // ABRE A CONEXÃO COM O RABBITMQ
+            $producer->publicar( $pedido );
+        }catch(\Exception $e){
+            Log::error('Falha ao publicar pedido no RabbitMQ', array(
+                'pedido_id' => $pedido['_id'],
+                'erro' => $e->getMessage()
+            ));
+
+            return response()->json(
+                array(
+                    'ok' => false,
+                    'mensagem' => 'Serviço de mensageria indisponível. Tente novamente em instantes.'
+                ),
+                503
+            );
+        }
+        
+        unset($producer);
         $response = array(
                         'ok' => true,
                         'itens'=> $this->getItens(),
                         'cliente' => $this->getCustomer()
                     );
         
-        return response()->json($response);
+        return response()->json($response,202);
     }
 }
