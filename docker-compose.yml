@@ -14,6 +14,7 @@ services:
   rmq_mensageria_exercicio:
     image: rabbitmq:3-management
     container_name: rabbitmq_exercicio
+    hostname: rabbitmq_exercicio
     ports:
       - "5672:5672"    # AMQP protocol
       - "15672:15672"  # Management UI
