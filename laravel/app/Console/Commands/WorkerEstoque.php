@@ -10,19 +10,12 @@ use Illuminate\Support\Facades\Log;
 #[Description('Worker que consome a fila processar_estoque com ACK manual')]
 class WorkerEstoque extends WorkerBase
 {
-    private \PDO $conn;
+    // CÓDIGOS DO MYSQL PARA CONEXÃO PERDIDA: 2006 = "MySQL server has gone away", 2013 = "Lost connection during query"
+    private const ERROS_CONEXAO_PERDIDA = array(2006, 2013);
 
-    public function __construct()
-    {
-        parent::__construct();
-
-        $db = config('database.connections.mysql');
-        $this->conn = new \PDO(
-            "mysql:host={$db['host']};port={$db['port']};dbname={$db['database']};charset=utf8mb4",
-            $db['username'],
-            $db['password']
-        );
-    }
+    // NULL ATÉ O PRIMEIRO USO (LAZY): O CONSTRUTOR NÃO ABRE CONEXÃO, ENTÃO OUTROS COMANDOS DO ARTISAN
+    // (list, migrate...) NÃO DEPENDEM DO MYSQL ESTAR NO AR
+    private ?\PDO $conn = null;
 
     protected function fila() : string
     {
@@ -34,7 +27,46 @@ class WorkerEstoque extends WorkerBase
         return "worker-estoque";
     }
 
+    /**
+     * ABRE A CONEXÃO COM O MYSQL NA PRIMEIRA CHAMADA E REAPROVEITA NAS SEGUINTES.
+     */
+    private function dbConnection() : \PDO
+    {
+        if($this->conn === null):
+            $db = config('database.connections.mysql');
+            $this->conn = new \PDO(
+                "mysql:host={$db['host']};port={$db['port']};dbname={$db['database']};charset=utf8mb4",
+                $db['username'],
+                $db['password']
+            );
+        endif;
+
+        return $this->conn;
+    }
+
+    private function conexaoPerdida(\PDOException $e) : bool
+    {
+        return in_array($e->errorInfo[1] ?? 0, self::ERROS_CONEXAO_PERDIDA, true);
+    }
+
     protected function processar(array $pedido) : void
+    {
+        try {
+            $this->processarPedido($pedido);
+        } catch (\PDOException $e) {
+            if(!$this->conexaoPerdida($e)):
+                throw $e;
+            endif;
+
+            // O WORKER FICA RODANDO POR HORAS: SE O MYSQL REINICIOU OU A CONEXÃO EXPIROU, DESCARTA A CONEXÃO
+            // MORTA E TENTA UMA VEZ COM UMA NOVA. É SEGURO REPETIR, POIS O PROCESSAMENTO É IDEMPOTENTE
+            $this->warn("Conexão com o MySQL perdida: reconectando \n");
+            $this->conn = null;
+            $this->processarPedido($pedido);
+        }
+    }
+
+    private function processarPedido(array $pedido) : void
     {
         // IDEMPOTÊNCIA: PEDIDO JÁ PROCESSADO (REENTREGA) NÃO BAIXA O ESTOQUE DE NOVO. RETORNAR NORMALMENTE = A BASE DÁ O ACK
         if($this->isOrderProcessed($pedido['_id'])):
@@ -52,20 +84,33 @@ class WorkerEstoque extends WorkerBase
      */
     private function baixarEstoque(array $pedido) : void
     {
-        $this->conn->beginTransaction();
+        $this->dbConnection()->beginTransaction();
 
         try {
             foreach($pedido['itens'] as $item):
                 $this->baixarItem($pedido['_id'], $item);
             endforeach;
 
-            $this->conn->commit();
+            $this->dbConnection()->commit();
         } catch (\Throwable $e) {
             // DESFAZ TUDO (INCLUSIVE AS MOVIMENTAÇÕES JÁ INSERIDAS) E RELANÇA PARA A BASE FAZER O nack
-            if($this->conn->inTransaction()):
-                $this->conn->rollBack();
-            endif;
+            $this->desfazerTransacao();
             throw $e;
+        }
+    }
+
+    /**
+     * SE A CONEXÃO JÁ CAIU, O ROLLBACK TAMBÉM FALHA E MASCARARIA O ERRO ORIGINAL. NESSE CASO O PRÓPRIO MYSQL
+     * JÁ DESFEZ A TRANSAÇÃO, ENTÃO O ERRO DO ROLLBACK É IGNORADO.
+     */
+    private function desfazerTransacao() : void
+    {
+        try {
+            if($this->dbConnection()->inTransaction()):
+                $this->dbConnection()->rollBack();
+            endif;
+        } catch (\PDOException $e) {
+            // IGNORADO DE PROPÓSITO (VER COMENTÁRIO ACIMA)
         }
     }
 
@@ -87,7 +132,7 @@ class WorkerEstoque extends WorkerBase
 
     private function registrarMovimentacao(string $pedido_id, string $produto, int $qtd) : void
     {
-        $query = $this->conn->prepare(
+        $query = $this->dbConnection()->prepare(
             "insert into movimentacoes_estoque (pedido_id, produto, quantidade, created_at, updated_at)
              values (:pedido_id, :produto, :qtd, now(), now())"
         );
@@ -98,7 +143,7 @@ class WorkerEstoque extends WorkerBase
     {
         // A CONDIÇÃO "quantidade >= :qtd_minima" É AVALIADA PELO BANCO DE FORMA ATÔMICA: NUNCA FICA NEGATIVO,
         // MESMO COM DOIS WORKERS BAIXANDO O MESMO PRODUTO AO MESMO TEMPO
-        $query = $this->conn->prepare(
+        $query = $this->dbConnection()->prepare(
             "update estoque set quantidade = quantidade - :qtd_baixa, updated_at = now()
              where produto = :produto and quantidade >= :qtd_minima"
         );
@@ -113,7 +158,7 @@ class WorkerEstoque extends WorkerBase
     protected function isOrderProcessed(string $pedido_id) : bool
     {
         // "limit 1" PARA NO PRIMEIRO REGISTRO ENCONTRADO, EM VEZ DE CONTAR TODOS (basta saber se existe)
-        $query = $this->conn->prepare("select 1 from movimentacoes_estoque where pedido_id = :id limit 1");
+        $query = $this->dbConnection()->prepare("select 1 from movimentacoes_estoque where pedido_id = :id limit 1");
         $query->execute(array(':id' => $pedido_id));
 
         // fetchColumn() DEVOLVE false QUANDO NÃO HÁ LINHA: SEMPRE RETORNA bool, MESMO SEM REGISTROS
