@@ -4,112 +4,114 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
-use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
-use PhpAmqpLib\Connection\AMQPStreamConnection;
-use PhpAmqpLib\Message\AMQPMessage;
 
 #[Signature('rabbitmq:worker-estoque')]
 #[Description('Worker que consome a fila processar_estoque com ACK manual')]
-class WorkerEstoque extends Command
+class WorkerEstoque extends WorkerBase
 {
-    /**
-     * Execute the console command.
-     */
-    public function handle() : int
+    private \PDO $conn;
+
+    public function __construct()
     {
-        $config = config('rabbitmq'); // FAZ LEITURA DO ARQUIVO DE CONFIGURAÇÃO
+        parent::__construct();
 
-        $connection = new AMQPStreamConnection(
-            $config['host'],
-            $config['port'],
-            $config['user'],
-            $config['password'],
-            $config['vhost']
-        ); // ABRE CONEXÃO COM O RABBITMQ
-
-        $this->info("Conexão com o RABBIT MQ ABERTA \n");
-
-        $channel = $connection->channel(); // ESTABELECE CANAL DE COMUNICAÇÃO
-        $this->info("Estabelecido o Canal de Comunicação \n");
-
-        $channel->basic_qos(
-            0, //prefetch_size	0	Sem limite em bytes (quase sempre 0).
-            1,  //prefetch_count	1	O worker recebe 1 mensagem por vez; só recebe a próxima depois do ack.
-            false //a_global	false	O limite vale por consumidor, não por canal inteiro.
+        $db = config('database.connections.mysql');
+        $this->conn = new \PDO(
+            "mysql:host={$db['host']};port={$db['port']};dbname={$db['database']};charset=utf8mb4",
+            $db['username'],
+            $db['password']
         );
+    }
 
-        // O CALLBACK PRECISA EXISTIR ANTES DO basic_consume, POIS ELE É PASSADO COMO PARÂMETRO
-        $callback = function(AMQPMessage $msg)
-        {
-            $pedido = json_decode($msg->getBody(), true);
+    protected function fila() : string
+    {
+        return "processar_estoque";
+    }
 
-            // 1. VALIDAR O QUE CHEGOU: MENSAGEM INVÁLIDA NUNCA VAI FUNCIONAR, ENTÃO NÃO ADIANTA RECOLOCAR NA FILA
-            if(!is_array($pedido) || empty($pedido['_id']) || empty($pedido['itens'])):
-                Log::warning('Mensagem inválida descartada na fila processar_estoque', array('corpo' => $msg->getBody()));
-                $this->error("Mensagem inválida descartada");
-                $msg->nack(false); // requeue = false -> DESCARTA (AINDA NÃO EXISTE DLQ)
-                return;
-            endif;
+    protected function processar(array $pedido) : void
+    {
+        // IDEMPOTÊNCIA: PEDIDO JÁ PROCESSADO (REENTREGA) NÃO BAIXA O ESTOQUE DE NOVO. RETORNAR NORMALMENTE = A BASE DÁ O ACK
+        if($this->isOrderProcessed($pedido['_id'])):
+            $this->warn("Pedido {$pedido['_id']} já foi processado anteriormente: ignorado \n");
+            return;
+        endif;
 
-            /*
-            // ARQUIVO-SINALIZADOR DA FALHA SIMULADA: SÓ É CRIADO NA PRIMEIRA ENTREGA, ENTÃO A REENTREGA NÃO FALHA
-            $arquivoTeste = storage_path("logs/falha_simulada_{$pedido['_id']}.log");
-            if(!$msg->isRedelivered()):
-                file_put_contents($arquivoTeste, "Falha simulada do pedido {$pedido['_id']} em " . date('Y-m-d H:i:s') . PHP_EOL);
-            endif;
-            */
-            try {
-                /*    
-                if(file_exists($arquivoTeste)):
-                    throw new \RuntimeException("FALHA SIMULADA");
-                endif;
-                */
-                $this->info("Pedido {$pedido['_id']} recebido" . ($msg->isRedelivered() ? ' (REENTREGA)' : '(PRIMEIRA VEZ QUE CHEGOU)') . "\n");
+        $this->baixarEstoque($pedido);
 
-                // 2. PROCESSAR O ESTOQUE (VERSÃO MÍNIMA: LOG + SLEEP SIMULANDO O TRABALHO)
-                Log::info('Processando estoque do pedido', array('pedido_id' => $pedido['_id'], 'itens' => $pedido['itens']));
-                sleep(2);
+        Log::info('Estoque baixado', array('pedido_id' => $pedido['_id'], 'itens' => $pedido['itens']));
+    }
 
-                $msg->ack(); // SÓ CONFIRMA DEPOIS DE PROCESSAR COM SUCESSO
-                $this->info("Pedido {$pedido['_id']} processado e confirmado (ACK) \n");
-            } catch (\Throwable $e) {
-                /*
-                // REMOVE O ARQUIVO-SINALIZADOR: A REENTREGA ENCONTRA O AMBIENTE "CONSERTADO" E DEVE PROCESSAR COM SUCESSO
-                if(file_exists($arquivoTeste)):
-                    unlink($arquivoTeste);
-                endif;
-                */
-                Log::error('Falha ao processar estoque', array('pedido_id' => $pedido['_id'], 'erro' => $e->getMessage()));
-
-                // 3. PRIMEIRA FALHA: RECOLOCA NA FILA (nack true). SE JÁ FOI REENTREGUE, DESCARTA PARA NÃO FICAR EM LOOP INFINITO
-                $msg->nack(!$msg->isRedelivered());
-                $this->error("Falha no pedido {$pedido['_id']}: {$e->getMessage()} \n");
-                //sleep(10);
-            }
-        };
-
-        $channel->basic_consume(
-            'processar_estoque',        // nome da fila: 'processar_estoque'
-            '', // nome do consumidor, '' deixa o RabbitMQ gerar um
-            false,     // false (irrelevante no RabbitMQ)
-            false,       // false  <-- ACK MANUAL. Este é o parâmetro-chave da etapa.
-            false,    // false (permite vários workers na mesma fila)
-            false,       // false (espera a confirmação do RabbitMQ)
-            $callback      // função chamada a cada mensagem recebida
-        );
-
-        $this->info("Aguardando mensagens na fila processar_estoque. Para sair: CTRL + C \n");
+    /**
+     * TRANSAÇÃO: A BAIXA DE TODOS OS ITENS DO PEDIDO É "TUDO OU NADA".
+     */
+    private function baixarEstoque(array $pedido) : void
+    {
+        $this->conn->beginTransaction();
 
         try {
-            while ($channel->is_consuming()):
-                $channel->wait();
-            endwhile;
-        } finally {
-            $channel->close();
-            $connection->close();
-        }
+            foreach($pedido['itens'] as $item):
+                $this->baixarItem($pedido['_id'], $item);
+            endforeach;
 
-        return self::SUCCESS;
-    }// end of function handle()
+            $this->conn->commit();
+        } catch (\Throwable $e) {
+            // DESFAZ TUDO (INCLUSIVE AS MOVIMENTAÇÕES JÁ INSERIDAS) E RELANÇA PARA A BASE FAZER O nack
+            if($this->conn->inTransaction()):
+                $this->conn->rollBack();
+            endif;
+            throw $e;
+        }
+    }
+
+    /**
+     * VALIDA UM ITEM, REGISTRA A MOVIMENTAÇÃO E DEBITA O SALDO.
+     */
+    private function baixarItem(string $pedido_id, array $item) : void
+    {
+        $produto = $item['produto'] ?? null;
+        $qtd = (int) ($item['qtd'] ?? 0);
+
+        if(empty($produto) || $qtd < 1):
+            throw new \InvalidArgumentException("Item inválido no pedido {$pedido_id}");
+        endif;
+
+        $this->registrarMovimentacao($pedido_id, $produto, $qtd);
+        $this->debitarSaldo($produto, $qtd);
+    }
+
+    private function registrarMovimentacao(string $pedido_id, string $produto, int $qtd) : void
+    {
+        $query = $this->conn->prepare(
+            "insert into movimentacoes_estoque (pedido_id, produto, quantidade, created_at, updated_at)
+             values (:pedido_id, :produto, :qtd, now(), now())"
+        );
+        $query->execute(array(':pedido_id' => $pedido_id, ':produto' => $produto, ':qtd' => $qtd));
+    }
+
+    private function debitarSaldo(string $produto, int $qtd) : void
+    {
+        // A CONDIÇÃO "quantidade >= :qtd_minima" É AVALIADA PELO BANCO DE FORMA ATÔMICA: NUNCA FICA NEGATIVO,
+        // MESMO COM DOIS WORKERS BAIXANDO O MESMO PRODUTO AO MESMO TEMPO
+        $query = $this->conn->prepare(
+            "update estoque set quantidade = quantidade - :qtd_baixa, updated_at = now()
+             where produto = :produto and quantidade >= :qtd_minima"
+        );
+        $query->execute(array(':qtd_baixa' => $qtd, ':produto' => $produto, ':qtd_minima' => $qtd));
+
+        // NENHUMA LINHA ALTERADA = PRODUTO INEXISTENTE OU SALDO INSUFICIENTE
+        if($query->rowCount() === 0):
+            throw new \RuntimeException("Estoque insuficiente ou produto inexistente: {$produto} (solicitado: {$qtd})");
+        endif;
+    }
+
+    protected function isOrderProcessed(string $pedido_id) : bool
+    {
+        // "limit 1" PARA NO PRIMEIRO REGISTRO ENCONTRADO, EM VEZ DE CONTAR TODOS (basta saber se existe)
+        $query = $this->conn->prepare("select 1 from movimentacoes_estoque where pedido_id = :id limit 1");
+        $query->execute(array(':id' => $pedido_id));
+
+        // fetchColumn() DEVOLVE false QUANDO NÃO HÁ LINHA: SEMPRE RETORNA bool, MESMO SEM REGISTROS
+        return $query->fetchColumn() !== false;
+    }
 }
