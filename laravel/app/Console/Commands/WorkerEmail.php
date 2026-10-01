@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\ValueObjects\Dinheiro;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Support\Facades\DB;
@@ -32,7 +33,7 @@ class WorkerEmail extends WorkerBase
 
         [$nome,$email] = $this->validarCliente($pedido);
         $linhasItens = $this->formatarItens($pedido['itens']);
-        $total = $this->formatarValor((float) $pedido['fullprice']);
+        $total = Dinheiro::deReais((float) $pedido['fullprice'])->formatar();
 
         $this->notification($nome,$email,$linhasItens,$total);
 
@@ -87,18 +88,12 @@ class WorkerEmail extends WorkerBase
         $linhas = '';
         foreach($itens as $item):
             $qtd = (int) ($item['qtd'] ?? 0);
-            $preco = (float) ($item['preco'] ?? 0);
-            $linhas .= "- " . ($item['produto'] ?? '') . ": {$qtd} x " . $this->formatarValor($preco)
-                . " = " . $this->formatarValor($qtd * $preco) . "\n";
+            $preco = Dinheiro::deReais((float) ($item['preco'] ?? 0));
+            $linhas .= "- " . ($item['produto'] ?? '') . ": {$qtd} x " . $preco->formatar()
+                . " = " . $preco->vezes($qtd)->formatar() . "\n";
         endforeach;
 
         return $linhas;
-    }
-
-    // FORMATO BRASILEIRO: R$ 1.234,56
-    protected function formatarValor(float $valor) : string
-    {
-        return 'R$ ' . number_format($valor, 2, ',', '.');
     }
 
     // APENAS ENVIA O E-MAIL: TODAS AS VARIÁVEIS JÁ CHEGAM VALIDADAS E FORMATADAS
