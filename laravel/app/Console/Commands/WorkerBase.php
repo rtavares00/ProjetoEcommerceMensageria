@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use PhpAmqpLib\Connection\AMQPConnectionConfig;
 use PhpAmqpLib\Connection\AMQPStreamConnection;
 use PhpAmqpLib\Message\AMQPMessage;
 
@@ -16,17 +17,31 @@ abstract class WorkerBase extends Command
     // QUEM CHAMA ack() E nack() É SEMPRE A CLASSE BASE, NUNCA O processar()
     abstract protected function processar(array $pedido) : void;
 
+    // CADA WORKER INFORMA O NOME DA SUA CONEXÃO, EXIBIDO NA UI DO RABBITMQ (ABAS Connections E Channels)
+    abstract protected function nomeConexao() : string;
+
+    // NOME DO CONSUMIDOR (consumer tag) EXIBIDO NA FILA (SEÇÃO Consumers): NOME DA CONEXÃO + PID,
+    // PARA DISTINGUIR VÁRIOS WORKERS DA MESMA FILA. A CLASSE FILHA PODE SOBRESCREVER
+    protected function nomeConsumidor() : string
+    {
+        return "{$this->nomeConexao()}-" . getmypid();
+    }
+
     public function handle() : int
     {
         $config = config('rabbitmq'); // FAZ LEITURA DO ARQUIVO DE CONFIGURAÇÃO
         $fila = $this->fila();
+
+        $configConexao = new AMQPConnectionConfig();
+        $configConexao->setConnectionName($this->nomeConexao()); // IDENTIFICA ESTE WORKER NA UI DO RABBITMQ
 
         $connection = new AMQPStreamConnection(
             $config['host'],
             $config['port'],
             $config['user'],
             $config['password'],
-            $config['vhost']
+            $config['vhost'],
+            config: $configConexao
         ); // ABRE CONEXÃO COM O RABBITMQ
 
         $this->info("Conexão com o RABBIT MQ ABERTA \n");
@@ -72,7 +87,7 @@ abstract class WorkerBase extends Command
 
         $channel->basic_consume(
             $fila,        // nome da fila, informado pela classe filha (fila())
-            '', // nome do consumidor, '' deixa o RabbitMQ gerar um
+            $this->nomeConsumidor(), // nome do consumidor (consumer tag); '' deixaria o RabbitMQ gerar um aleatório
             false,     // false (irrelevante no RabbitMQ)
             false,       // false  <-- ACK MANUAL. Este é o parâmetro-chave da etapa.
             false,    // false (permite vários workers na mesma fila)
