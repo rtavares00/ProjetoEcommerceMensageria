@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
 #[Signature('rabbitmq:worker-email')]
@@ -23,11 +24,38 @@ class WorkerEmail extends WorkerBase
 
     protected function processar(array $pedido) : void
     {
+        // IDEMPOTÊNCIA: E-MAIL JÁ ENVIADO (REENTREGA) NÃO É ENVIADO DE NOVO. RETORNAR NORMALMENTE = A BASE DÁ O ACK
+        if($this->emailJaEnviado($pedido['_id'])):
+            $this->warn("E-mail do pedido {$pedido['_id']} já foi enviado anteriormente: ignorado \n");
+            return;
+        endif;
+
         [$nome,$email] = $this->validarCliente($pedido);
         $linhasItens = $this->formatarItens($pedido['itens']);
         $total = $this->formatarValor((float) $pedido['fullprice']);
 
         $this->notification($nome,$email,$linhasItens,$total);
+
+        // SÓ REGISTRA DEPOIS DE ENVIAR: SE O ENVIO FALHAR NADA É GRAVADO E A RETENTATIVA ENVIA NORMALMENTE.
+        // A JANELA DE DUPLICIDADE FICA RESTRITA AO INTERVALO ENTRE O ENVIO E ESTE REGISTRO
+        $this->registrarEnvio($pedido['_id'],$email);
+    }
+
+    protected function emailJaEnviado(string $pedido_id) : bool
+    {
+        return DB::table('emails_enviados')->where('pedido_id',$pedido_id)->exists();
+    }
+
+    protected function registrarEnvio(string $pedido_id,string $email) : void
+    {
+        // insertOrIgnore: SE OUTRO WORKER JÁ REGISTROU ESTE PEDIDO AO MESMO TEMPO, A CHAVE ÚNICA IMPEDE
+        // O DUPLICADO E NÃO HÁ ERRO (O E-MAIL JÁ FOI ENVIADO, NÃO ADIANTA FALHAR AGORA)
+        DB::table('emails_enviados')->insertOrIgnore(array(
+            'pedido_id' => $pedido_id,
+            'email' => $email,
+            'created_at' => now(),
+            'updated_at' => now()
+        ));
     }
 
     // RETORNA [$nome, $email], JÁ VALIDADOS E SEM ESPAÇOS SOBRANDO
