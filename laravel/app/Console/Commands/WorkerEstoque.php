@@ -29,6 +29,11 @@ class WorkerEstoque extends WorkerBase
         return "processar_estoque";
     }
 
+    protected function nomeConexao() : string
+    {
+        return "worker-estoque";
+    }
+
     protected function processar(array $pedido) : void
     {
         // IDEMPOTÊNCIA: PEDIDO JÁ PROCESSADO (REENTREGA) NÃO BAIXA O ESTOQUE DE NOVO. RETORNAR NORMALMENTE = A BASE DÁ O ACK
