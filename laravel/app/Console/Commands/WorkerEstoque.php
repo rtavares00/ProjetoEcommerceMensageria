@@ -52,8 +52,8 @@ class WorkerEstoque extends Command
                 return;
             endif;
 
-            // ARQUIVO-SINALIZADOR DA FALHA SIMULADA: SÓ É CRIADO NA PRIMEIRA ENTREGA, ENTÃO A REENTREGA NÃO FALHA
             /*
+            // ARQUIVO-SINALIZADOR DA FALHA SIMULADA: SÓ É CRIADO NA PRIMEIRA ENTREGA, ENTÃO A REENTREGA NÃO FALHA
             $arquivoTeste = storage_path("logs/falha_simulada_{$pedido['_id']}.log");
             if(!$msg->isRedelivered()):
                 file_put_contents($arquivoTeste, "Falha simulada do pedido {$pedido['_id']} em " . date('Y-m-d H:i:s') . PHP_EOL);
@@ -65,7 +65,7 @@ class WorkerEstoque extends Command
                     throw new \RuntimeException("FALHA SIMULADA");
                 endif;
                 */
-                $this->info("Pedido {$pedido['_id']} recebido " . ($msg->isRedelivered() ? ' (REENTREGA)' : '(PRIMEIRA VEZ QUE CHEGOU)') . "\n");
+                $this->info("Pedido {$pedido['_id']} recebido" . ($msg->isRedelivered() ? ' (REENTREGA)' : '(PRIMEIRA VEZ QUE CHEGOU)') . "\n");
 
                 // 2. PROCESSAR O ESTOQUE (VERSÃO MÍNIMA: LOG + SLEEP SIMULANDO O TRABALHO)
                 Log::info('Processando estoque do pedido', array('pedido_id' => $pedido['_id'], 'itens' => $pedido['itens']));
@@ -74,9 +74,8 @@ class WorkerEstoque extends Command
                 $msg->ack(); // SÓ CONFIRMA DEPOIS DE PROCESSAR COM SUCESSO
                 $this->info("Pedido {$pedido['_id']} processado e confirmado (ACK) \n");
             } catch (\Throwable $e) {
-                //$i --;
-                // REMOVE O ARQUIVO-SINALIZADOR: A REENTREGA ENCONTRA O AMBIENTE "CONSERTADO" E DEVE PROCESSAR COM SUCESSO
                 /*
+                // REMOVE O ARQUIVO-SINALIZADOR: A REENTREGA ENCONTRA O AMBIENTE "CONSERTADO" E DEVE PROCESSAR COM SUCESSO
                 if(file_exists($arquivoTeste)):
                     unlink($arquivoTeste);
                 endif;
@@ -86,7 +85,7 @@ class WorkerEstoque extends Command
                 // 3. PRIMEIRA FALHA: RECOLOCA NA FILA (nack true). SE JÁ FOI REENTREGUE, DESCARTA PARA NÃO FICAR EM LOOP INFINITO
                 $msg->nack(!$msg->isRedelivered());
                 $this->error("Falha no pedido {$pedido['_id']}: {$e->getMessage()} \n");
-                sleep(10);
+                //sleep(10);
             }
         };
 
