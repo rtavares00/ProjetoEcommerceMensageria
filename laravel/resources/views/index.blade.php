@@ -41,6 +41,9 @@
                 </div>
 
                 <form id="checkoutForm" class="space-y-4">
+                    <!-- ID pré-gerado do pedido (UUID): chave de idempotência -->
+                    <input type="hidden" id="pedido_id" value="{{ Str::uuid() }}">
+
                     <div>
                         <label class="block text-xs font-medium text-slate-400 mb-1">Nome do Cliente</label>
                         <input type="text" id="cliente_nome" value="Dev PHP" required
@@ -202,6 +205,7 @@
             const total = (parseFloat(prodPreco) * qtd).toFixed(2);
 
             const payload = {
+                pedido_id: document.getElementById('pedido_id').value,
                 cliente: {
                     nome: document.getElementById('cliente_nome').value,
                     email: document.getElementById('cliente_email').value,
@@ -220,6 +224,7 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
+                        'Accept': 'application/json',
                         'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
                     },
                     body: JSON.stringify(payload)
@@ -227,8 +232,13 @@
 
                 if (response.ok) {
                     const resData = await response.json().catch(() => ({ status: 'HTTP ' + response.status }));
-                    appendLog(`✅ API respondeu em tempo recorde! Mensagem publicada no RabbitMQ.`, 'success');
+                    if (resData.duplicado) {
+                        appendLog(`♻️ Pedido ${resData.pedido_id} já havia sido aceito. Nada foi publicado de novo (idempotência).`, 'system');
+                    } else {
+                        appendLog(`✅ API respondeu em tempo recorde! Mensagem publicada no RabbitMQ.`, 'success');
+                    }
                     appendLog(`📦 Resposta da API: <code class="text-slate-400">${JSON.stringify(resData)}</code>`, 'info');
+                    document.getElementById('pedido_id').value = crypto.randomUUID(); // pedido aceito: próxima compra, novo ID
                 } else {
                     appendLog(`❌ Erro no envio. O script checkout.php respondeu status ${response.status}`, 'error');
                 }
