@@ -9,6 +9,11 @@ return [
 
     'exchange' => env('RABBITMQ_EXCHANGE', 'vendas.events'),
 
+    // DEAD-LETTER: mensagens rejeitadas sem reenfileirar (nack com requeue = false) vão para a fila
+    // "<fila><sufixo>" através desta exchange. Cada fila tem a sua própria DLQ.
+    'dlx'        => env('RABBITMQ_DLX', 'vendas.dlx'),
+    'dlq_sufixo' => '.dlq',
+
     'queues' => [
         'processar_estoque',
         'enviar_email',
