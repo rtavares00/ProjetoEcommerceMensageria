@@ -45,7 +45,7 @@ services:
         condition: service_healthy
     # "Saudável" = Apache respondendo, o que só acontece depois dos três comandos. Os workers esperam por isso
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/public"]
+      test: ["CMD", "curl", "-f", "http://localhost/public/up"]
       interval: 10s
       timeout: 5s
       retries: 5
