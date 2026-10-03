@@ -28,6 +28,7 @@ class WorkerEmail extends WorkerBase
         // IDEMPOTÊNCIA: E-MAIL JÁ ENVIADO (REENTREGA) NÃO É ENVIADO DE NOVO. RETORNAR NORMALMENTE = A BASE DÁ O ACK
         if($this->emailJaEnviado($pedido['_id'])):
             $this->warn("E-mail do pedido {$pedido['_id']} já foi enviado anteriormente: ignorado \n");
+            $this->log()->warning('E-mail já enviado anteriormente: ignorado', array('pedido_id' => $pedido['_id']));
             return;
         endif;
 
@@ -36,6 +37,7 @@ class WorkerEmail extends WorkerBase
         $total = Dinheiro::deReais((float) $pedido['fullprice'])->formatar();
 
         $this->notification($nome,$email,$linhasItens,$total);
+        $this->log()->info('E-mail enviado', array('pedido_id' => $pedido['_id'], 'destinatario' => $email));
 
         // SÓ REGISTRA DEPOIS DE ENVIAR: SE O ENVIO FALHAR NADA É GRAVADO E A RETENTATIVA ENVIA NORMALMENTE.
         // A JANELA DE DUPLICIDADE FICA RESTRITA AO INTERVALO ENTRE O ENVIO E ESTE REGISTRO
