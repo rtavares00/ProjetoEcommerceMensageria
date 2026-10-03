@@ -10,8 +10,9 @@ x-worker: &worker
   networks:
     - rede_mensageria
   depends_on:
-    rmq_mensageria_exercicio:
-      condition: service_healthy # só inicia quando o RabbitMQ responde (healthcheck)
+    apache_php83:
+      condition: service_healthy # só inicia depois que o Laravel terminou composer install, migrate e rabbitmq:setup
+                                 # (tabelas e filas já existem). O Laravel, por sua vez, só sobe com MySQL e RabbitMQ saudáveis
 
 services:
 
@@ -24,9 +25,34 @@ services:
       - "80:80"
     volumes:
       - ./laravel:/var/www/html
+    environment:
+      COMPOSER_ALLOW_SUPERUSER: 1  # o composer roda como root no container: sem este aviso de segurança
+    # Prepara o ambiente ANTES de iniciar o Apache. O "&&" interrompe a sequência se algum comando falhar
+    # (o container então encerra, em vez de subir um Apache com o ambiente quebrado).
+    # O "exec" faz o Apache assumir o processo principal do container (recebe os sinais do Docker).
+    command: >
+      sh -c " rm -fr /var/www/html/vendor &&
+      composer install --no-interaction &&
+      php artisan migrate --force &&
+      php artisan db:seed &&
+      php artisan rabbitmq:setup &&
+      exec apache2-foreground"
+    # Só inicia com o MySQL e o RabbitMQ prontos: composer/migrate/setup dependem dos dois
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rmq_mensageria_exercicio:
+        condition: service_healthy
+    # "Saudável" = Apache respondendo, o que só acontece depois dos três comandos. Os workers esperam por isso
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/public"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 600s           # tempo máximo de preparo (composer install + migrate + rabbitmq:setup)
     networks:
       - rede_mensageria
-    
+
   rmq_mensageria_exercicio:
     image: rabbitmq:3-management
     container_name: RABBITMQ_EXERCICIO
@@ -60,6 +86,14 @@ services:
       - "3306:3306"
     volumes:
       - ./mysql_data:/var/lib/mysql
+    # Necessário para o Laravel esperar o MySQL aceitar conexões (depends_on com service_healthy).
+    # Usa 127.0.0.1 (TCP): durante a 1ª inicialização o servidor temporário só escuta no socket local
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
     networks:
       - rede_mensageria
 
