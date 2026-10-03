@@ -4,7 +4,6 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
-use Illuminate\Support\Facades\Log;
 
 #[Signature('rabbitmq:worker-estoque')]
 #[Description('Worker que consome a fila processar_estoque com ACK manual')]
@@ -71,12 +70,13 @@ class WorkerEstoque extends WorkerBase
         // IDEMPOTÊNCIA: PEDIDO JÁ PROCESSADO (REENTREGA) NÃO BAIXA O ESTOQUE DE NOVO. RETORNAR NORMALMENTE = A BASE DÁ O ACK
         if($this->isOrderProcessed($pedido['_id'])):
             $this->warn("Pedido {$pedido['_id']} já foi processado anteriormente: ignorado \n");
+            $this->log()->warning('Pedido já processado anteriormente: ignorado', array('pedido_id' => $pedido['_id']));
             return;
         endif;
 
         $this->baixarEstoque($pedido);
 
-        Log::info('Estoque baixado', array('pedido_id' => $pedido['_id'], 'itens' => $pedido['itens']));
+        $this->log()->info('Estoque baixado', array('pedido_id' => $pedido['_id'], 'itens' => $pedido['itens']));
     }
 
     /**
