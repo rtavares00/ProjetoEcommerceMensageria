@@ -29,6 +29,7 @@ class WorkerNota extends WorkerBase
         // RETORNAR NORMALMENTE = A BASE DÁ O ACK
         if(file_exists($arquivo)):
             $this->warn("Nota do pedido {$pedido['_id']} já foi gerada anteriormente: ignorada \n");
+            $this->log()->warning('Nota já gerada anteriormente: ignorada', array('pedido_id' => $pedido['_id']));
             return;
         endif;
 
@@ -37,6 +38,7 @@ class WorkerNota extends WorkerBase
 
         $this->gravarNota($arquivo,$conteudo);
         $this->info("Nota gerada: {$arquivo} \n");
+        $this->log()->info('Nota gerada', array('pedido_id' => $pedido['_id'], 'arquivo' => basename($arquivo)));
     }
 
     protected function caminhoNota(string $pedido_id) : string
