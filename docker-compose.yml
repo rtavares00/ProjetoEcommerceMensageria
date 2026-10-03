@@ -1,5 +1,20 @@
+# Configuração comum dos workers do RabbitMQ: mesma imagem do Laravel, só muda o command de cada serviço
+x-worker: &worker
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: mensageria-laravel      # nome único: os workers reaproveitam a mesma imagem
+  restart: unless-stopped        # se o worker cair, o Docker o sobe de novo
+  volumes:
+    - ./laravel:/var/www/html
+  networks:
+    - rede_mensageria
+  depends_on:
+    rmq_mensageria_exercicio:
+      condition: service_healthy # só inicia quando o RabbitMQ responde (healthcheck)
+
 services:
-  
+
   apache_php83:
     build:
       context: .
@@ -62,6 +77,23 @@ services:
       - "8080:80"          # http://localhost:8080
     networks:
       - rede_mensageria
+
+  # Workers: cada um consome a sua fila. Para escalar: docker compose up -d --scale worker_email=3
+  # Depois de alterar o código de um worker: docker compose restart worker_estoque (o código fica em memória)
+  worker_estoque:
+    <<: *worker
+    container_name: WORKER_ESTOQUE
+    command: php artisan rabbitmq:worker-estoque
+
+  worker_email:
+    <<: *worker
+    container_name: WORKER_EMAIL
+    command: php artisan rabbitmq:worker-email
+
+  worker_nota:
+    <<: *worker
+    container_name: WORKER_NOTA
+    command: php artisan rabbitmq:worker-nota
 
 networks:
   rede_mensageria:
